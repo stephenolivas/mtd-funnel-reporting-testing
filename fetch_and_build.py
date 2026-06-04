@@ -278,12 +278,13 @@ def fetch_leads_created(start_date, end_date):
     start_str = start_utc.strftime("%Y-%m-%dT%H:%M:%S.000000Z")
     end_str   = end_utc.strftime("%Y-%m-%dT%H:%M:%S.000000Z")
 
+    # Use query syntax — direct date_created__ params don't filter server-side
+    query = f'date_created >= "{start_str}" AND date_created <= "{end_str}"'
     print(f"Fetching leads created ({start_date} → {end_date})...", flush=True)
     leads, skip = [], 0
     while True:
         data = close_get("lead/", {
-            "date_created__gte": start_str,
-            "date_created__lte": end_str,
+            "query":   query,
             "_fields": f"id,status_id,custom.{CF_FUNNEL_NAME}",
             "_limit":  200,
             "_skip":   skip,
@@ -553,8 +554,8 @@ def build_funnel_rows(funnel_data, funnel_totals, goals=None, day_of_month=1, da
         <span class="chevron" id="chev-{fid}">›</span>{funnel}{_excl_note}
       </td>
       <td class="col-num">{lc_disp}</td>
-      <td class="col-pct {book_pct_cls}">{book_pct_disp}</td>
       <td class="col-num">{bo if bo else "—"}</td>
+      <td class="col-pct {book_pct_cls}">{book_pct_disp}</td>
       <td class="col-pace {_pc}">{pace_label(bo, _on_pace, _goal)}</td>
       <td class="col-goal">{goal_pct_label(bo, _goal)}</td>
       <td class="col-num">{sh if sh else "—"}</td>
@@ -578,8 +579,8 @@ def build_funnel_rows(funnel_data, funnel_totals, goals=None, day_of_month=1, da
     <tr class="utm-row" data-parent="{fid}">
       <td class="col-name col-utm">↳ {utm_label}</td>
       <td class="col-num">—</td>
-      <td class="col-pct"></td>
       <td class="col-num">{b if b else "—"}</td>
+      <td class="col-pct"></td>
       <td class="col-pace"></td>
       <td class="col-goal"></td>
       <td class="col-num">{s if s else "—"}</td>
@@ -1128,8 +1129,8 @@ def generate_html(data, month_picker_html="", week_picker_html=""):
       <tr>
         <th class="col-name">Funnel</th>
         <th class="col-num">Leads</th>
-        <th class="col-pct">Book %</th>
         <th class="col-num">Booked</th>
+        <th class="col-pct">Book %</th>
         <th class="col-pace">Projected</th>
         <th class="col-goal">Goal %</th>
         <th class="col-num">Showed</th>
@@ -1148,8 +1149,8 @@ def generate_html(data, month_picker_html="", week_picker_html=""):
     <tr class="total-row">
       <td class="col-name">TOTAL</td>
       <td class="col-num">{g_lc if g_lc else "—"}</td>
-      <td class="col-pct">—</td>
       <td class="col-num">{g_bo}</td>
+      <td class="col-pct">—</td>
       <td class="col-pace">—</td>
       <td class="col-goal">—</td>
       <td class="col-num">{g_sh}</td>
