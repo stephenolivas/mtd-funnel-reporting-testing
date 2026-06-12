@@ -250,7 +250,8 @@ def fetch_leads_by_booked_date(start_date, end_date):
             "_fields": (f"id,status_id,"
                         f"custom.{CF_FUNNEL_NAME},"
                         f"custom.{CF_SHOW_UP},"
-                        f"custom.{CF_QUALIFIED}"),
+                        f"custom.{CF_QUALIFIED},"
+                        f"custom.{CF_PROGRAM_TIER}"),
             "_limit":  200,
             "_skip":   skip,
         })
