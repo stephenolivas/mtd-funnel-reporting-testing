@@ -32,6 +32,7 @@ session.headers.update({"Content-Type": "application/json"})
 CF_FUNNEL_NAME  = "cf_xqDQE8fkPsWa0RNEve7hcaxKblCe6489XeZGRDzyPdX"  # Funnel Name DEAL (lead)
 CF_SHOW_UP      = "cf_OPyvpU45RdvjLqfm8V1VWwNxrGKogEH2IBJmfCj0Uhq"  # First Call Show Up (opp)
 CF_QUALIFIED    = "cf_ZDx7NBQaDzV1yYrFcBMzt6cIYj81dAcswpNN0CQzCPS"  # Qualified (opp)
+CF_PROGRAM_TIER = "cf_XvdC8hcwyfkoOFn6ElNdGEWbd567Th65m4spLuugYm3"           # Program Tier Purchased (opp)
 CF_UTM_CAMPAIGN = "cf_jnbd0xzUY3tuxzxiGxBs2hONuExeXMvAoTUM2R64Lq3"  # utm_campaign (contact)
 CF_UTM_CONTENT      = "cf_R7o66i0XPycLQHlxOLbIqk6c6j3oB8CzxF3e3apI1hn"  # utm_content (contact)
 CF_FIRST_SALES_CALL = "cf_LFdYEQ6bsgp49YjZzefypDmdVx8iwuakWDSLPLpVrBq"  # First Sales Call Booked Date (lead)
@@ -175,7 +176,7 @@ def fetch_won_opps_by_range(start_date, end_date):
             "status_type":   "won",
             "date_won__gte": start_str,
             "date_won__lte": end_str,
-            "_fields":       "id,lead_id,value,date_won,user_id",
+            "_fields":       f"id,lead_id,value,date_won,user_id,custom.{CF_PROGRAM_TIER}",
             "_skip":         skip,
             "_limit":        100,
         })
@@ -353,7 +354,8 @@ def aggregate_data(start_date, end_date, month_label,
 
     print(f"  Booked rows after status filter: {len(meeting_rows)}", flush=True)
 
-    closed_rows = []
+    closed_rows    = []
+    tier_by_funnel = {}
     for opp in won_opps:
         lid = opp["lead_id"]
         if lid not in lead_cache:
@@ -370,6 +372,14 @@ def aggregate_data(start_date, end_date, month_label,
         utm_campaign, utm_content = utm_cache[lid]
         utm = (utm_content or "Unattributed") if funnel in UTM_CONTENT_FUNNELS               else (utm_campaign or "Unattributed")
         closed_rows.append({"funnel": funnel, "value": value, "utm_campaign": utm})
+        # Track program tier breakdown
+        tier_raw = opp.get(f"custom.{CF_PROGRAM_TIER}") or opp.get(f"custom_{CF_PROGRAM_TIER}")
+        if isinstance(tier_raw, list): tier_raw = tier_raw[0] if tier_raw else None
+        tier = str(tier_raw).strip() if tier_raw else "Unknown"
+        tier_by_funnel.setdefault(funnel, {})
+        tier_by_funnel[funnel].setdefault(tier, {"count": 0, "revenue": 0.0})
+        tier_by_funnel[funnel][tier]["count"]   += 1
+        tier_by_funnel[funnel][tier]["revenue"] += value
 
     print(f"  Closed-won rows: {len(closed_rows)}", flush=True)
 
@@ -429,6 +439,7 @@ def aggregate_data(start_date, end_date, month_label,
     data = {
         "funnel_data":   funnel_data,
         "funnel_totals": funnel_totals,
+        "tier_by_funnel": tier_by_funnel,
         "grand":         grand,
         "group_totals":  group_totals,
         "generated_at":  now_pac.strftime("%B %d, %Y at %I:%M %p PT"),
@@ -518,7 +529,7 @@ def goal_pct_label(booked, goal):
 
 # ── HTML Generation ────────────────────────────────────────────────────────────
 
-def build_funnel_rows(funnel_data, funnel_totals, goals=None, day_of_month=1, days_in_month=30):
+def build_funnel_rows(funnel_data, funnel_totals, goals=None, day_of_month=1, days_in_month=30, tier_by_funnel=None):
     """Build <tr> HTML for each funnel and its UTM sub-rows, grouped by section."""
     all_funnels = set(funnel_data.keys())
     claimed     = set()
@@ -545,8 +556,7 @@ def build_funnel_rows(funnel_data, funnel_totals, goals=None, day_of_month=1, da
         _excl_note  = " *" if _is_excl else ""
         lc          = t.get("leads_created", 0)
         lc_disp     = lc if lc else "—"
-        book_pct_disp = pct(bo, lc) if lc else "—"
-        book_pct_cls  = pct_class(bo, lc, high=0.20, low=0.10) if lc else ""
+
 
         html = [f"""
     <tr class="{_row_class}" onclick="toggleUTM('{fid}')" data-fid="{fid}">
@@ -555,7 +565,6 @@ def build_funnel_rows(funnel_data, funnel_totals, goals=None, day_of_month=1, da
       </td>
       <td class="col-num">{lc_disp}</td>
       <td class="col-num">{bo if bo else "—"}</td>
-      <td class="col-pct {book_pct_cls}">{book_pct_disp}</td>
       <td class="col-pace {_pc}">{pace_label(bo, _on_pace, _goal)}</td>
       <td class="col-goal">{goal_pct_label(bo, _goal)}</td>
       <td class="col-num">{sh if sh else "—"}</td>
@@ -564,9 +573,31 @@ def build_funnel_rows(funnel_data, funnel_totals, goals=None, day_of_month=1, da
       <td class="col-pct {pct_class(qu, bo)}">{pct(qu, bo)}</td>
       <td class="col-num">{cl if cl else "—"}</td>
       <td class="col-pct {pct_class(cl, bo, high=0.15, low=0.07)}">{pct(cl, bo)}</td>
-      <td class="col-rev">{fmt_currency(rev)}</td>
+      <td class="col-rev pkg-trigger" onclick="event.stopPropagation();togglePkg('{fid}')" title="Click to see package breakdown">{fmt_currency(rev)} <span class="pkg-chevron" id="pkgchev-{fid}">›</span></td>
       <td class="col-num">{rev_per_close(rev, cl)}</td>
     </tr>"""]
+
+        # Package/tier sub-rows
+        tiers = (tier_by_funnel or {}).get(funnel, {})
+        for tier_name, tvals in sorted(tiers.items(), key=lambda x: -x[1]["revenue"]):
+            tc  = tvals["count"]
+            tr_ = tvals["revenue"]
+            html.append(f"""
+    <tr class="pkg-row" data-parent="{fid}">
+      <td class="col-name col-pkg">↳ {tier_name}</td>
+      <td class="col-num">—</td>
+      <td class="col-num">—</td>
+      <td class="col-pace"></td>
+      <td class="col-goal"></td>
+      <td class="col-num">—</td>
+      <td class="col-pct"></td>
+      <td class="col-num">—</td>
+      <td class="col-pct"></td>
+      <td class="col-num">{tc}</td>
+      <td class="col-pct"></td>
+      <td class="col-rev">{fmt_currency(tr_)}</td>
+      <td class="col-num">{rev_per_close(tr_, tc)}</td>
+    </tr>""")
 
         utms = funnel_data.get(funnel, {})
         for utm_label, vals in sorted(utms.items(), key=lambda x: -x[1]["booked"]):
@@ -580,7 +611,6 @@ def build_funnel_rows(funnel_data, funnel_totals, goals=None, day_of_month=1, da
       <td class="col-name col-utm">↳ {utm_label}</td>
       <td class="col-num">—</td>
       <td class="col-num">{b if b else "—"}</td>
-      <td class="col-pct"></td>
       <td class="col-pace"></td>
       <td class="col-goal"></td>
       <td class="col-num">{s if s else "—"}</td>
@@ -601,7 +631,7 @@ def build_funnel_rows(funnel_data, funnel_totals, goals=None, day_of_month=1, da
         grp_id = group_label.lower().replace(" ", "_").replace("-", "_")
         rows.append(f"""
     <tr class="section-header-row" onclick="toggleSection('{grp_id}')">
-      <td colspan="14">
+      <td colspan="13">
         <span class="section-chevron open" id="secchev-{grp_id}">›</span>FUNNEL BREAKDOWN — {group_label}
       </td>
     </tr>""")
@@ -620,7 +650,7 @@ def build_funnel_rows(funnel_data, funnel_totals, goals=None, day_of_month=1, da
     if extras:
         rows.append(f"""
     <tr class="section-header-row" onclick="toggleSection('other')">
-      <td colspan="14">
+      <td colspan="13">
         <span class="section-chevron open" id="secchev-other">›</span>FUNNEL BREAKDOWN — OTHER
       </td>
     </tr>""")
@@ -640,8 +670,10 @@ def generate_html(data, month_picker_html="", week_picker_html=""):
     goals        = data.get("goals", {})
     day_of_month = data.get("day_of_month", 1)
     days_in_month= data.get("days_in_month", 30)
+    tier_by_funnel = data.get("tier_by_funnel", {})
     funnel_rows  = build_funnel_rows(data["funnel_data"], data["funnel_totals"],
-                                     goals, day_of_month, days_in_month)
+                                     goals, day_of_month, days_in_month,
+                                     tier_by_funnel)
 
     g_lc  = grand.get("leads_created", 0)
     g_bo  = grand["booked"]
@@ -1130,7 +1162,6 @@ def generate_html(data, month_picker_html="", week_picker_html=""):
         <th class="col-name">Funnel</th>
         <th class="col-num">Leads</th>
         <th class="col-num">Booked</th>
-        <th class="col-pct">Book %</th>
         <th class="col-pace">Projected</th>
         <th class="col-goal">Goal %</th>
         <th class="col-num">Showed</th>
@@ -1150,7 +1181,6 @@ def generate_html(data, month_picker_html="", week_picker_html=""):
       <td class="col-name">TOTAL</td>
       <td class="col-num">{g_lc if g_lc else "—"}</td>
       <td class="col-num">{g_bo}</td>
-      <td class="col-pct">—</td>
       <td class="col-pace">—</td>
       <td class="col-goal">—</td>
       <td class="col-num">{g_sh}</td>
@@ -1168,6 +1198,14 @@ def generate_html(data, month_picker_html="", week_picker_html=""):
 
 <script src="/mtd-funnel-dashboard/archives/picker.js"></script>
 <script>
+  function togglePkg(fid) {{
+    const pkgRows = document.querySelectorAll(`.pkg-row[data-parent="${{fid}}"]`);
+    const chevron = document.getElementById("pkgchev-" + fid);
+    const isOpen  = chevron && chevron.classList.contains("open");
+    pkgRows.forEach(r => r.classList.toggle("open", !isOpen));
+    if (chevron) chevron.classList.toggle("open", !isOpen);
+  }}
+
   function toggleUTM(fid) {{
     const utmRows = document.querySelectorAll(`.utm-row[data-parent="${{fid}}"]`);
     const chevron = document.getElementById("chev-" + fid);
