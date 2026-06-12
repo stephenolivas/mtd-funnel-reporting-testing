@@ -154,7 +154,8 @@ def fetch_lead(lead_id):
         "_fields": f"id,display_name,status_id,"
                    f"custom.{CF_FUNNEL_NAME},"
                    f"custom.{CF_SHOW_UP},"
-                   f"custom.{CF_QUALIFIED}"
+                   f"custom.{CF_QUALIFIED},"
+                   f"custom.{CF_PROGRAM_TIER}"
     })
 
 
@@ -372,8 +373,8 @@ def aggregate_data(start_date, end_date, month_label,
         utm_campaign, utm_content = utm_cache[lid]
         utm = (utm_content or "Unattributed") if funnel in UTM_CONTENT_FUNNELS               else (utm_campaign or "Unattributed")
         closed_rows.append({"funnel": funnel, "value": value, "utm_campaign": utm})
-        # Track program tier breakdown
-        tier_raw = opp.get(f"custom.{CF_PROGRAM_TIER}") or opp.get(f"custom_{CF_PROGRAM_TIER}")
+        # Track program tier breakdown — field is on LEAD, not opportunity
+        tier_raw = lead.get(f"custom.{CF_PROGRAM_TIER}")
         if isinstance(tier_raw, list): tier_raw = tier_raw[0] if tier_raw else None
         tier = str(tier_raw).strip() if tier_raw else "Unknown"
         tier_by_funnel.setdefault(funnel, {})
@@ -583,7 +584,7 @@ def build_funnel_rows(funnel_data, funnel_totals, goals=None, day_of_month=1, da
             tc  = tvals["count"]
             tr_ = tvals["revenue"]
             html.append(f"""
-    <tr class="pkg-row" data-parent="{fid}">
+    <tr class="pkg-row" data-parent="{fid}" style="display:none">
       <td class="col-name col-pkg">↳ {tier_name}</td>
       <td class="col-num">—</td>
       <td class="col-num">—</td>
@@ -1202,7 +1203,10 @@ def generate_html(data, month_picker_html="", week_picker_html=""):
     const pkgRows = document.querySelectorAll(`.pkg-row[data-parent="${{fid}}"]`);
     const chevron = document.getElementById("pkgchev-" + fid);
     const isOpen  = chevron && chevron.classList.contains("open");
-    pkgRows.forEach(r => r.classList.toggle("open", !isOpen));
+    pkgRows.forEach(r => {{
+      r.style.display = isOpen ? "none" : "table-row";
+      r.classList.toggle("open", !isOpen);
+    }});
     if (chevron) chevron.classList.toggle("open", !isOpen);
   }}
 
